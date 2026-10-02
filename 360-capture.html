@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>360 Capture — Assistente de Fotos 360°</title>
+<style>
+:root{--bg:#070b16;--card:#111827;--line:#273449;--text:#f7f8fc;--muted:#9aa7bd;--accent:#66e3ff;--good:#55e39a;--warn:#ffca63}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -10%,#182744 0,#070b16 50%);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:760px;margin:auto;padding:16px 14px 34px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:5px 0 14px}
+h1{font-size:23px;margin:0}.sub{color:var(--muted);font-size:13px;margin-top:3px}
+.card{background:rgba(17,24,39,.9);border:1px solid var(--line);border-radius:20px;padding:14px;margin:12px 0;box-shadow:0 12px 40px #0005}
+#stage{position:relative;aspect-ratio:3/4;background:#02040a;border-radius:16px;overflow:hidden}
+video{width:100%;height:100%;object-fit:cover}
+#guide{position:absolute;inset:0;pointer-events:none}
+.ring{position:absolute;left:50%;top:50%;width:54%;aspect-ratio:1;border:2px solid #fff9;border-radius:50%;transform:translate(-50%,-50%)}
+.cross:before,.cross:after{content:"";position:absolute;background:#fff8}.cross:before{width:70%;height:1px;left:15%;top:50%}.cross:after{height:70%;width:1px;top:15%;left:50%}
+#target{position:absolute;left:50%;top:15%;transform:translate(-50%,-50%);width:18px;height:18px;border:3px solid var(--accent);border-radius:50%;box-shadow:0 0 18px var(--accent)}
+#msg{position:absolute;left:10px;right:10px;bottom:10px;text-align:center;background:#000b;border-radius:12px;padding:9px;font-size:13px}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:9px}.full{grid-column:1/-1}
+button,select{border:1px solid var(--line);background:#172136;color:var(--text);border-radius:12px;padding:12px;font-weight:700;font-size:14px}
+button.primary{background:var(--accent);color:#06101a;border:0}button.danger{background:#2a1820;color:#ff9fae}
+button:disabled{opacity:.45}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stat{background:#0c1322;border-radius:13px;padding:10px;text-align:center}.num{font-size:20px;font-weight:800}.label{font-size:11px;color:var(--muted)}
+.progress{height:8px;background:#0b1220;border-radius:99px;overflow:hidden;margin:10px 0}.bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--good));transition:.2s}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}.hint{font-size:13px;color:var(--muted);line-height:1.45}
+#thumbs{display:grid;grid-template-columns:repeat(6,1fr);gap:5px}.thumb{aspect-ratio:1;object-fit:cover;width:100%;border-radius:7px;border:1px solid #26334a}
+.small{font-size:11px;color:var(--muted)}
+@media(min-width:650px){main{padding-top:28px}#stage{aspect-ratio:16/10}}
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div><h1>360 Capture</h1><div class="sub">Assistente para fotografar uma volta panorâmica com o celular</div></div>
+    <button id="motionBtn">Ativar giroscópio</button>
+  </div>
+
+  <div class="card">
+    <div id="stage">
+      <video id="video" autoplay muted playsinline></video>
+      <div id="guide"><div class="ring"></div><div class="cross"></div><div id="target"></div><div id="msg">Toque em “Iniciar câmera”</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="stats">
+      <div class="stat"><div class="num" id="count">0/12</div><div class="label">fotos</div></div>
+      <div class="stat"><div class="num" id="angle">0°</div><div class="label">giro estimado</div></div>
+      <div class="stat"><div class="num" id="step">30°</div><div class="label">por foto</div></div>
+    </div>
+    <div class="progress"><div class="bar" id="bar"></div></div>
+    <div class="controls">
+      <button id="start" class="primary">📷 Iniciar câmera</button>
+      <button id="capture" disabled>● Tirar foto</button>
+      <button id="auto" disabled class="full">▶ Modo automático: foto a cada 30°</button>
+      <button id="finish" disabled class="full">✓ Finalizar e salvar fotos</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row"><strong>Configuração</strong>
+      <select id="shots"><option value="8">8 fotos — 45°</option><option value="12" selected>12 fotos — 30°</option><option value="18">18 fotos — 20°</option><option value="24">24 fotos — 15°</option></select>
+    </div>
+    <p class="hint">Para uma panorâmica mais fácil de montar, mantenha o celular na mesma altura e gire o corpo lentamente. Sobreponha bastante as fotos (cerca de 25–40%).</p>
+  </div>
+
+  <div class="card">
+    <div class="row"><strong>Fotos capturadas</strong><span class="small" id="status">nenhuma ainda</span></div>
+    <div id="thumbs" style="margin-top:9px"></div>
+  </div>
+</main>
+
+<canvas id="canvas" hidden></canvas>
+<script>
+const $=id=>document.getElementById(id);
+const video=$('video'), canvas=$('canvas'), ctx=canvas.getContext('2d');
+let stream=null, photos=[], n=12, step=30, auto=false, timer=null, baseHeading=null, heading=0;
+
+function update(){
+  $('count').textContent=`${photos.length}/${n}`;
+  $('step').textContent=step+'°';
+  $('bar').style.width=(Math.min(photos.length/n,1)*100)+'%';
+  $('status').textContent=photos.length?`${photos.length} capturada(s)`:'nenhuma ainda';
+  $('capture').disabled=!stream || photos.length>=n;
+  $('finish').disabled=photos.length<2;
+  $('auto').disabled=!stream || photos.length>=n;
+}
+function msg(t){$('msg').textContent=t}
+function render(){
+  $('thumbs').innerHTML='';
+  photos.forEach(p=>{let im=new Image();im.src=p.url;im.className='thumb';$('thumbs').appendChild(im)})
+}
+async function startCamera(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+    video.srcObject=stream; await video.play();
+    msg('Câmera pronta. Centralize o alvo e comece pela frente.');
+    $('start').textContent='↻ Reiniciar câmera'; update();
+  }catch(e){msg('Não foi possível abrir a câmera. Permita o acesso e use HTTPS ou localhost.')}
+}
+function take(){
+  if(!stream||photos.length>=n)return;
+  canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const url=canvas.toDataURL('image/jpeg',.92);
+  photos.push({url,heading});
+  msg(photos.length<n?`Foto ${photos.length} feita. Gire ${step}° lentamente.`:'Volta completa! Revise as fotos e finalize.');
+  render(); update();
+}
+function autoMode(){
+  if(timer){clearInterval(timer);timer=null;auto=false;$('auto').textContent='▶ Modo automático: foto a cada '+step+'°';return}
+  auto=true;$('auto').textContent='⏸ Pausar automático';
+  take(); timer=setInterval(()=>{if(photos.length>=n){clearInterval(timer);timer=null;auto=false;return} take()},3500);
+}
+function downloadAll(){
+  photos.forEach((p,i)=>{const a=document.createElement('a');a.href=p.url;a.download=`360_${String(i+1).padStart(2,'0')}.jpg`;a.click()});
+  msg('Fotos salvas. Agora você pode montá-las em um editor de panorama/360.');
+}
+$('start').onclick=startCamera;
+$('capture').onclick=take;
+$('auto').onclick=autoMode;
+$('finish').onclick=downloadAll;
+$('shots').onchange=e=>{n=+e.target.value;step=360/n;photos=[];render();update();msg('Configuração alterada. Pronto para uma nova volta.')};
+$('motionBtn').onclick=async()=>{
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+      const p=await DeviceOrientationEvent.requestPermission(); if(p!=='granted')throw 0;
+    }
+    window.addEventListener('deviceorientation',e=>{
+      let h=e.webkitCompassHeading ?? (e.alpha==null?null:360-e.alpha);
+      if(h==null)return; if(baseHeading==null)baseHeading=h;
+      heading=Math.round((h-baseHeading+360)%360); $('angle').textContent=heading+'°';
+    });
+    $('motionBtn').textContent='Giroscópio ativo'; msg('Gire devagar. O ângulo mostrado é uma estimativa do sensor do celular.');
+  }catch(e){msg('O navegador não liberou o sensor de movimento. A captura manual continua funcionando.')}
+};
+update();
+</script>
+</body>
+</html>
